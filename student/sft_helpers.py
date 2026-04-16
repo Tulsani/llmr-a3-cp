@@ -2,20 +2,28 @@ import torch
 
 
 def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer) -> dict[str, torch.Tensor]:
-    # tokenize WITHOUT adding special tokens automatically
+    # tokenize without automatically adding BOS/EOS
     tokenized_prompt = tokenizer(prompt_strs, add_special_tokens=False)["input_ids"]
     tokenized_output = tokenizer(output_strs, add_special_tokens=False)["input_ids"]
 
-    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
-    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+    eos_id = tokenizer.eos_token_id
+    if eos_id is None:
+        raise ValueError("Tokenizer must have an eos_token_id")
+
+    pad_id = tokenizer.pad_token_id
+    if pad_id is None:
+        pad_id = 0
 
     input_ids_list = []
     response_mask_list = []
 
     for prompt_ids, output_ids in zip(tokenized_prompt, tokenized_output):
+        # append EOS once at the very end
         combined = prompt_ids + output_ids + [eos_id]
-        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
         input_ids_list.append(combined)
+
+        # response mask should mark output tokens + EOS as 1
+        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
         response_mask_list.append(mask)
 
     max_len = max(len(ids) for ids in input_ids_list)
@@ -25,8 +33,8 @@ def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer) -> dict[str,
 
     for ids, mask in zip(input_ids_list, response_mask_list):
         pad_len = max_len - len(ids)
-        padded_input_ids.append([pad_id] * pad_len + ids)   # left-pad
-        padded_masks.append([0] * pad_len + mask)           # left-pad
+        padded_input_ids.append(ids + [pad_id] * pad_len)
+        padded_masks.append(mask + [0] * pad_len)
 
     input_ids_tensor = torch.tensor(padded_input_ids, dtype=torch.long)
     mask_tensor = torch.tensor(padded_masks, dtype=torch.long)
