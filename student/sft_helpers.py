@@ -13,13 +13,8 @@ def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer) -> dict[str,
     response_mask_list = []
 
     for prompt_ids, output_ids in zip(tokenized_prompt, tokenized_output):
-    # Only add EOS if not already present
-        if len(output_ids) == 0 or output_ids[-1] != eos_id:
-            combined = prompt_ids + output_ids + [eos_id]
-            mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
-        else:
-            combined = prompt_ids + output_ids
-            mask = [0] * len(prompt_ids) + [1] * len(output_ids)
+        combined = prompt_ids + output_ids + [eos_id]
+        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
         input_ids_list.append(combined)
         response_mask_list.append(mask)
 
@@ -30,8 +25,8 @@ def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer) -> dict[str,
 
     for ids, mask in zip(input_ids_list, response_mask_list):
         pad_len = max_len - len(ids)
-        padded_input_ids.append(ids + [pad_id] * pad_len)
-        padded_masks.append(mask + [0] * pad_len)
+        padded_input_ids.append([pad_id] * pad_len + ids)   # left-pad
+        padded_masks.append([0] * pad_len + mask)           # left-pad
 
     input_ids_tensor = torch.tensor(padded_input_ids, dtype=torch.long)
     mask_tensor = torch.tensor(padded_masks, dtype=torch.long)
