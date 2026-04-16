@@ -2,47 +2,57 @@ import torch
 
 
 def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer) -> dict[str, torch.Tensor]:
-    # tokenize without automatically adding BOS/EOS
-    tokenized_prompt = tokenizer(prompt_strs, add_special_tokens=False)["input_ids"]
-    tokenized_output = tokenizer(output_strs, add_special_tokens=False)["input_ids"]
+    # tokenize prompt and output separately without special tokens
+    tokenized_prompt = [
+        tokenizer.encode(prompt, add_special_tokens=False)
+        for prompt in prompt_strs
+    ]
+    tokenized_output = [
+        tokenizer.encode(output, add_special_tokens=False)
+        for output in output_strs
+    ]
 
-    eos_id = tokenizer.eos_token_id
-    if eos_id is None:
-        raise ValueError("Tokenizer must have an eos_token_id")
+    # concatenate prompt + output
+    input_ids_list = []
+    prompt_lengths = []
+    output_lengths = []
 
-    pad_id = tokenizer.pad_token_id
+    for prompt_ids, output_ids in zip(tokenized_prompt, tokenized_output):
+        combined = prompt_ids + output_ids
+        input_ids_list.append(combined)
+        prompt_lengths.append(len(prompt_ids))
+        output_lengths.append(len(output_ids))
+
+    # pad full concatenated sequence first
+    max_len = max(len(ids) for ids in input_ids_list)
+    pad_id = tokenizer.eos_token_id
     if pad_id is None:
         pad_id = 0
 
-    input_ids_list = []
-    response_mask_list = []
+    padded_input_ids = torch.full(
+        (len(input_ids_list), max_len),
+        pad_id,
+        dtype=torch.long
+    )
 
-    for prompt_ids, output_ids in zip(tokenized_prompt, tokenized_output):
-        # append EOS once at the very end
-        combined = prompt_ids + output_ids + [eos_id]
-        input_ids_list.append(combined)
+    for i, ids in enumerate(input_ids_list):
+        padded_input_ids[i, :len(ids)] = torch.tensor(ids, dtype=torch.long)
 
-        # response mask should mark output tokens + EOS as 1
-        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
-        response_mask_list.append(mask)
+    # shift for causal LM
+    input_ids = padded_input_ids[:, :-1]
+    labels = padded_input_ids[:, 1:]
 
-    max_len = max(len(ids) for ids in input_ids_list)
+    # response mask should align with labels
+    seq_len = max_len - 1
+    response_mask = torch.zeros(len(input_ids_list), seq_len, dtype=torch.long)
 
-    padded_input_ids = []
-    padded_masks = []
-
-    for ids, mask in zip(input_ids_list, response_mask_list):
-        pad_len = max_len - len(ids)
-        padded_input_ids.append(ids + [pad_id] * pad_len)
-        padded_masks.append(mask + [0] * pad_len)
-
-    input_ids_tensor = torch.tensor(padded_input_ids, dtype=torch.long)
-    mask_tensor = torch.tensor(padded_masks, dtype=torch.long)
+    for i, (prompt_len, output_len) in enumerate(zip(prompt_lengths, output_lengths)):
+        response_mask[i, prompt_len - 1 : prompt_len + output_len - 1] = 1
 
     return {
-        "input_ids": input_ids_tensor[:, :-1],
-        "labels": input_ids_tensor[:, 1:],
-        "response_mask": mask_tensor[:, 1:],
+        "input_ids": input_ids,
+        "labels": labels,
+        "response_mask": response_mask,
     }
 
 def compute_entropy(logits) -> torch.Tensor:
