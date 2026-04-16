@@ -2,44 +2,42 @@ import torch
 
 
 def tokenize_prompt_and_output(prompt_strs, output_strs, tokenizer) -> dict[str, torch.Tensor]:
-    #tokenizing input and response
-    tokenized_prompt = tokenizer(prompt_strs, add_special_tokens=True)["input_ids"]
+    # tokenize WITHOUT adding special tokens automatically
+    tokenized_prompt = tokenizer(prompt_strs, add_special_tokens=False)["input_ids"]
     tokenized_output = tokenizer(output_strs, add_special_tokens=False)["input_ids"]
-    
-    #input_ids and response_list
+
+    eos_id = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else 0
+    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
+
     input_ids_list = []
     response_mask_list = []
 
-    for prompt_ids,output_ids in zip(tokenized_prompt,tokenized_output):
-        combined = prompt_ids + output_ids # concating indivusal prompt and inputs
+    for prompt_ids, output_ids in zip(tokenized_prompt, tokenized_output):
+        # append EOS once at the very end
+        combined = prompt_ids + output_ids + [eos_id]
         input_ids_list.append(combined)
 
-        #mask 0 for prompt token and 1 for response tokens
-        mask = [0] * len(prompt_ids) + [1] * len(output_ids)
+        # response mask: 0 for prompt, 1 for output tokens + EOS
+        mask = [0] * len(prompt_ids) + [1] * (len(output_ids) + 1)
         response_mask_list.append(mask)
-    
-    # padding to max lenght in each batch
-    max_len = max(len(ids) for ids in input_ids_list)
-    # setting default pad id
-    pad_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else 0
 
-    padded_inputs_ids = []
+    max_len = max(len(ids) for ids in input_ids_list)
+
+    padded_input_ids = []
     padded_masks = []
 
-    for ids,mask in zip(input_ids_list,response_mask_list):
+    for ids, mask in zip(input_ids_list, response_mask_list):
         pad_len = max_len - len(ids)
-        padded_inputs_ids.append(ids + [pad_id]*pad_len)
-        padded_masks.append(mask + [0]*pad_len)
+        padded_input_ids.append(ids + [pad_id] * pad_len)
+        padded_masks.append(mask + [0] * pad_len)
 
-    # convert to tensors
-    input_ids_tensor = torch.tensor(padded_inputs_ids) # (batch_size,max_len)
-    mask_tensor = torch.tensor(padded_masks)
+    input_ids_tensor = torch.tensor(padded_input_ids, dtype=torch.long)
+    mask_tensor = torch.tensor(padded_masks, dtype=torch.long)
 
-    #response mask
-    return{
-        "input_ids": input_ids_tensor[:,:-1],
-        "labels": input_ids_tensor[:,1:],
-        "response_mask":mask_tensor[:,1:]
+    return {
+        "input_ids": input_ids_tensor[:, :-1],
+        "labels": input_ids_tensor[:, 1:],
+        "response_mask": mask_tensor[:, 1:],
     }
 
 def compute_entropy(logits) -> torch.Tensor:
